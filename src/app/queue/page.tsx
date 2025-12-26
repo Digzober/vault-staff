@@ -67,6 +67,9 @@ export default function QueuePage() {
   const fetchCertificates = async (locationId: string) => {
     try {
       setIsRefreshing(true)
+      // Fetch certificates that:
+      // 1. Have no specific claim location (can be claimed anywhere) OR
+      // 2. Are assigned to this specific location
       const { data, error } = await supabase
         .from('certificates')
         .select(`
@@ -87,7 +90,7 @@ export default function QueuePage() {
             phone
           )
         `)
-        .eq('claim_location_id', locationId)
+        .or(`claim_location_id.is.null,claim_location_id.eq.${locationId}`)
         .is('voided', false)
         .is('redeemed_at', null)
         .order('created_at', { ascending: true })

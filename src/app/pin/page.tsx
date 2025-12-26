@@ -70,10 +70,8 @@ function PinEntryContent() {
     setError('')
 
     try {
-      // For now, use a default PIN until staff_pin column is added
-      // TODO: Replace with actual PIN verification from database
-      const defaultPin = '1234'
-      const storedPin = location?.staff_pin || defaultPin
+      // Use the staff_pin from the location, fallback to default if not set
+      const storedPin = location?.staff_pin || '1234'
 
       if (pinToVerify === storedPin) {
         // Store location in sessionStorage for the queue page
