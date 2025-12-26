@@ -18,7 +18,8 @@ import {
   X,
   AlertTriangle,
   CheckCircle,
-  XCircle
+  XCircle,
+  Keyboard
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Location, Certificate } from '@/types'
@@ -82,10 +83,11 @@ export default function QueuePage() {
   const [selectedCertificate, setSelectedCertificate] = useState<Certificate | null>(null)
   const [showScanner, setShowScanner] = useState(false)
   const [scanResult, setScanResult] = useState<ScanResult | null>(null)
+  const [scannerInput, setScannerInput] = useState('')
+  const [isProcessingScan, setIsProcessingScan] = useState(false)
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
   const router = useRouter()
-  const scannerRef = useRef<HTMLDivElement>(null)
-  const html5QrCodeRef = useRef<any>(null)
+  const scannerInputRef = useRef<HTMLInputElement>(null)
 
   // Fetch certificates with proper error handling
   const fetchCertificates = useCallback(async (locationId: string) => {
@@ -194,61 +196,34 @@ export default function QueuePage() {
     }
   }, [router, fetchCertificates])
 
-  // Initialize QR Scanner
-  const startScanner = async () => {
+  // Open scanner modal and focus input
+  const startScanner = () => {
     setShowScanner(true)
     setScanResult(null)
-
-    // Dynamically import to avoid SSR issues
-    const { Html5Qrcode } = await import('html5-qrcode')
-
-    setTimeout(async () => {
-      if (scannerRef.current && !html5QrCodeRef.current) {
-        try {
-          html5QrCodeRef.current = new Html5Qrcode('qr-reader')
-          await html5QrCodeRef.current.start(
-            { facingMode: 'environment' },
-            {
-              fps: 10,
-              qrbox: { width: 250, height: 250 },
-            },
-            handleQrScan,
-            (errorMessage: string) => {
-              // Ignore scan errors (no QR found)
-            }
-          )
-        } catch (err) {
-          console.error('Error starting scanner:', err)
-          setScanResult({
-            type: 'error',
-            title: 'Camera Error',
-            message: 'Unable to access camera. Please check permissions.'
-          })
-        }
-      }
+    setScannerInput('')
+    // Focus the input after a short delay to let the modal render
+    setTimeout(() => {
+      scannerInputRef.current?.focus()
     }, 100)
   }
 
-  const stopScanner = async () => {
-    if (html5QrCodeRef.current) {
-      try {
-        await html5QrCodeRef.current.stop()
-        html5QrCodeRef.current = null
-      } catch (err) {
-        console.error('Error stopping scanner:', err)
-      }
-    }
+  const stopScanner = () => {
     setShowScanner(false)
     setScanResult(null)
+    setScannerInput('')
   }
 
-  const handleQrScan = async (decodedText: string) => {
-    // Stop scanner after successful scan
-    if (html5QrCodeRef.current) {
-      await html5QrCodeRef.current.stop()
-      html5QrCodeRef.current = null
-    }
+  // Handle scanner input (works with handheld scanners that emulate keyboard)
+  const handleScannerSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!scannerInput.trim() || isProcessingScan) return
 
+    setIsProcessingScan(true)
+    await processScannedData(scannerInput.trim())
+    setIsProcessingScan(false)
+  }
+
+  const processScannedData = async (decodedText: string) => {
     try {
       // Parse QR data
       let qrData: any
@@ -616,14 +591,14 @@ export default function QueuePage() {
         )}
       </main>
 
-      {/* QR Scanner Modal */}
+      {/* Scanner Modal - Works with handheld barcode scanners */}
       {showScanner && (
         <div className="fixed inset-0 bg-black/95 z-50 flex flex-col">
           {/* Scanner Header */}
           <div className="flex items-center justify-between p-4 border-b border-[#333]">
             <div>
               <h2 className="text-lg font-semibold text-white">Scan Pass</h2>
-              <p className="text-xs text-[#a1a1a1]">Point camera at QR code</p>
+              <p className="text-xs text-[#a1a1a1]">Use handheld scanner or type pass number</p>
             </div>
             <button
               onClick={stopScanner}
@@ -633,17 +608,61 @@ export default function QueuePage() {
             </button>
           </div>
 
-          {/* Scanner Area */}
+          {/* Scanner Input Area */}
           <div className="flex-1 flex flex-col items-center justify-center p-4">
             {!scanResult ? (
-              <div className="w-full max-w-sm">
-                <div
-                  id="qr-reader"
-                  ref={scannerRef}
-                  className="rounded-xl overflow-hidden"
-                />
-                <p className="text-center text-[#a1a1a1] text-sm mt-4">
-                  Scanning for QR codes...
+              <div className="w-full max-w-md">
+                {/* Scanner Input */}
+                <form onSubmit={handleScannerSubmit} className="space-y-4">
+                  <div className="bg-[#1a1a1a] border-2 border-[#D4AF37] rounded-xl p-6">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-12 h-12 rounded-full bg-[#D4AF37]/20 flex items-center justify-center">
+                        <ScanLine className="w-6 h-6 text-[#D4AF37]" />
+                      </div>
+                      <div>
+                        <p className="text-white font-medium">Ready to Scan</p>
+                        <p className="text-[#a1a1a1] text-sm">Scanner input will appear below</p>
+                      </div>
+                    </div>
+
+                    <input
+                      ref={scannerInputRef}
+                      type="text"
+                      value={scannerInput}
+                      onChange={(e) => setScannerInput(e.target.value)}
+                      placeholder="Scan QR code or type pass number..."
+                      className="w-full bg-[#0a0a0a] border border-[#333] rounded-lg px-4 py-3 text-white placeholder-[#666] font-mono text-lg focus:outline-none focus:border-[#D4AF37] transition-colors"
+                      autoFocus
+                      autoComplete="off"
+                    />
+
+                    <div className="flex items-center gap-2 mt-3 text-[#666] text-xs">
+                      <Keyboard className="w-4 h-4" />
+                      <span>Handheld scanners will auto-submit on Enter</span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={!scannerInput.trim() || isProcessingScan}
+                    className="w-full py-3 px-4 bg-[#D4AF37] text-black font-semibold rounded-lg hover:bg-[#B8960C] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {isProcessingScan ? (
+                      <>
+                        <div className="w-5 h-5 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="w-5 h-5" />
+                        Verify Pass
+                      </>
+                    )}
+                  </button>
+                </form>
+
+                <p className="text-center text-[#666] text-sm mt-6">
+                  Scan a QR code or type the pass number (e.g., VLT-20241226-ABC12)
                 </p>
               </div>
             ) : (
@@ -714,7 +733,8 @@ export default function QueuePage() {
                   <button
                     onClick={() => {
                       setScanResult(null)
-                      startScanner()
+                      setScannerInput('')
+                      setTimeout(() => scannerInputRef.current?.focus(), 100)
                     }}
                     className="w-full py-3 px-4 bg-[#333] text-white font-medium rounded-lg hover:bg-[#444] transition-colors"
                   >
