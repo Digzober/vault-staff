@@ -93,7 +93,14 @@ export default function QueuePage() {
   const fetchCertificates = useCallback(async (locationId: string) => {
     try {
       setIsRefreshing(true)
-      const { data, error } = await supabase
+
+      // Get today's date at midnight for filtering completed orders
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      const todayISO = today.toISOString()
+
+      // Fetch active (unredeemed) orders
+      const { data: activeOrders, error: activeError } = await supabase
         .from('certificates')
         .select(`
           *,
@@ -123,8 +130,45 @@ export default function QueuePage() {
         .is('redeemed_at', null)
         .order('created_at', { ascending: true })
 
-      if (error) throw error
-      setCertificates(data || [])
+      if (activeError) throw activeError
+
+      // Fetch today's completed orders for this location
+      const { data: completedOrders, error: completedError } = await supabase
+        .from('certificates')
+        .select(`
+          *,
+          auctions (
+            id,
+            packages (
+              id,
+              name,
+              description,
+              items
+            )
+          ),
+          profiles:user_id (
+            id,
+            name,
+            username,
+            phone
+          ),
+          claim_location:claim_location_id (
+            id,
+            name,
+            full_name
+          )
+        `)
+        .or(`claim_location_id.is.null,claim_location_id.eq.${locationId}`)
+        .is('voided', false)
+        .not('redeemed_at', 'is', null)
+        .gte('redeemed_at', todayISO)
+        .order('redeemed_at', { ascending: false })
+
+      if (completedError) throw completedError
+
+      // Combine active and completed orders
+      const allOrders = [...(activeOrders || []), ...(completedOrders || [])]
+      setCertificates(allOrders)
       setLastUpdate(new Date())
     } catch (error) {
       console.error('Error fetching certificates:', error)
