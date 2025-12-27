@@ -4,25 +4,24 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Package,
-  Clock,
-  CheckCircle2,
-  ChefHat,
   LogOut,
   RefreshCw,
   User,
   Phone,
   Hash,
   MapPin,
-  AlertCircle,
   X,
   AlertTriangle,
   Send,
   XCircle,
   RotateCcw,
-  Bell
+  Bell,
+  Copy,
+  Check,
+  DollarSign
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
-import { Certificate, CancelledClaimsByLocation } from '@/types'
+import { CancelledClaimsByLocation } from '@/types'
 import { format, formatDistanceToNow } from 'date-fns'
 
 type TabType = 'new' | 'assigned' | 'cancelled'
@@ -38,13 +37,13 @@ const TAB_CONFIG = {
     description: 'New winning drops to process'
   },
   assigned: {
-    label: 'Assigned',
+    label: 'Sent to Staff',
     icon: Send,
     color: 'blue',
     bgClass: 'bg-blue-500/10',
     textClass: 'text-blue-500',
     borderClass: 'border-blue-500/30',
-    description: 'Sent to staff locations'
+    description: 'Packages sent to staff for preparation'
   },
   cancelled: {
     label: 'Cancelled',
@@ -66,6 +65,7 @@ interface WinningDrop {
   package_name: string
   package_items: any[]
   final_price: number
+  original_price: number
   created_at: string
   expires_at: string
   claim_location_id: string | null
@@ -74,95 +74,93 @@ interface WinningDrop {
   admin_assigned_at: string | null
 }
 
-interface Location {
-  id: string
-  name: string
-  full_name: string
-}
-
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<TabType>('new')
   const [winningDrops, setWinningDrops] = useState<WinningDrop[]>([])
   const [cancelledByLocation, setCancelledByLocation] = useState<CancelledClaimsByLocation[]>([])
-  const [locations, setLocations] = useState<Location[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
   const [selectedDrop, setSelectedDrop] = useState<WinningDrop | null>(null)
-  const [showLocationModal, setShowLocationModal] = useState(false)
-  const [selectedLocation, setSelectedLocation] = useState<string>('')
+  const [showModal, setShowModal] = useState(false)
   const [adminNotes, setAdminNotes] = useState('')
+  const [copiedField, setCopiedField] = useState<string | null>(null)
+  const [isSending, setIsSending] = useState(false)
   const router = useRouter()
+
+  const copyToClipboard = async (text: string, field: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedField(field)
+      setTimeout(() => setCopiedField(null), 2000)
+    } catch (err) {
+      console.error('Failed to copy:', err)
+    }
+  }
 
   const fetchData = useCallback(async () => {
     try {
       setIsRefreshing(true)
 
-      // Fetch all winning drops using the function
-      const { data: drops, error: dropsError } = await supabase
-        .rpc('get_new_winning_drops')
-
-      if (dropsError) {
-        console.error('Error fetching drops:', dropsError)
-        // Fallback to direct query if function doesn't exist
-        const { data: fallbackDrops } = await supabase
-          .from('certificates')
-          .select(`
+      // Fetch all winning drops directly (more reliable than RPC)
+      const { data: fallbackDrops, error: fetchError } = await supabase
+        .from('certificates')
+        .select(`
+          id,
+          certificate_number,
+          user_id,
+          final_price,
+          original_price,
+          created_at,
+          expires_at,
+          claim_location_id,
+          order_status,
+          admin_assigned_at,
+          auctions (
             id,
-            certificate_number,
-            user_id,
-            final_price,
-            created_at,
-            expires_at,
-            claim_location_id,
-            order_status,
-            admin_assigned_at,
-            auctions (
-              id,
-              packages (
-                id,
-                name,
-                items
-              )
-            ),
-            profiles:user_id (
+            packages (
               id,
               name,
-              username,
-              phone
-            ),
-            claim_location:claim_location_id (
-              id,
-              name,
-              full_name
+              items
             )
-          `)
-          .is('voided', false)
-          .is('redeemed_at', null)
-          .gt('expires_at', new Date().toISOString())
-          .order('created_at', { ascending: false })
+          ),
+          profiles:user_id (
+            id,
+            name,
+            username,
+            phone
+          ),
+          claim_location:claim_location_id (
+            id,
+            name,
+            full_name
+          )
+        `)
+        .is('voided', false)
+        .is('redeemed_at', null)
+        .order('created_at', { ascending: false })
 
-        if (fallbackDrops) {
-          const formattedDrops: WinningDrop[] = fallbackDrops.map((c: any) => ({
-            certificate_id: c.id,
-            certificate_number: c.certificate_number,
-            user_id: c.user_id,
-            customer_name: c.profiles?.name || c.profiles?.username || 'Unknown',
-            customer_phone: c.profiles?.phone || '',
-            package_name: c.auctions?.packages?.name || 'Package',
-            package_items: c.auctions?.packages?.items || [],
-            final_price: c.final_price,
-            created_at: c.created_at,
-            expires_at: c.expires_at,
-            claim_location_id: c.claim_location_id,
-            claim_location_name: c.claim_location?.full_name || c.claim_location?.name || null,
-            order_status: c.order_status || 'new',
-            admin_assigned_at: c.admin_assigned_at
-          }))
-          setWinningDrops(formattedDrops)
-        }
-      } else if (drops) {
-        setWinningDrops(drops)
+      if (fetchError) {
+        console.error('Error fetching certificates:', fetchError)
+      } else if (fallbackDrops) {
+        const formattedDrops: WinningDrop[] = fallbackDrops.map((c: any) => ({
+          certificate_id: c.id,
+          certificate_number: c.certificate_number,
+          user_id: c.user_id,
+          customer_name: c.profiles?.name || c.profiles?.username || 'Unknown',
+          customer_phone: c.profiles?.phone || '',
+          package_name: c.auctions?.packages?.name || 'Package',
+          package_items: c.auctions?.packages?.items || [],
+          final_price: c.final_price,
+          original_price: c.original_price,
+          created_at: c.created_at,
+          expires_at: c.expires_at,
+          claim_location_id: c.claim_location_id,
+          claim_location_name: c.claim_location?.full_name || c.claim_location?.name || null,
+          order_status: c.order_status || 'new',
+          admin_assigned_at: c.admin_assigned_at
+        }))
+        setWinningDrops(formattedDrops)
       }
 
       // Fetch cancelled claims by location
@@ -171,17 +169,6 @@ export default function AdminDashboard() {
 
       if (cancelled) {
         setCancelledByLocation(cancelled)
-      }
-
-      // Fetch locations for assignment
-      const { data: locs } = await supabase
-        .from('locations')
-        .select('id, name, full_name')
-        .eq('active', true)
-        .order('name')
-
-      if (locs) {
-        setLocations(locs)
       }
 
       setLastUpdate(new Date())
@@ -224,14 +211,20 @@ export default function AdminDashboard() {
     router.push('/')
   }
 
-  const assignToLocation = async () => {
-    if (!selectedDrop || !selectedLocation) return
+  const markPackageReady = async () => {
+    if (!selectedDrop) return
 
+    // Must have a location already selected by customer
+    if (!selectedDrop.claim_location_id) {
+      alert('This drop does not have a pickup location selected by the customer yet.')
+      return
+    }
+
+    setIsSending(true)
     try {
       const { error } = await supabase
         .from('certificates')
         .update({
-          claim_location_id: selectedLocation,
           order_status: 'pending',
           admin_assigned_at: new Date().toISOString(),
           admin_notes: adminNotes || null
@@ -240,13 +233,15 @@ export default function AdminDashboard() {
 
       if (error) throw error
 
-      setShowLocationModal(false)
+      setShowModal(false)
       setSelectedDrop(null)
-      setSelectedLocation('')
       setAdminNotes('')
       fetchData()
     } catch (error) {
-      console.error('Error assigning to location:', error)
+      console.error('Error marking package ready:', error)
+      alert('Error sending to staff. Please try again.')
+    } finally {
+      setIsSending(false)
     }
   }
 
@@ -429,7 +424,7 @@ export default function AdminDashboard() {
             <p className="text-[#a1a1a1]">No {TAB_CONFIG[activeTab].label.toLowerCase()}</p>
             <p className="text-[#666] text-sm mt-1">
               {activeTab === 'new' ? 'New winning drops will appear here' :
-               activeTab === 'assigned' ? 'Assigned orders will appear here' :
+               activeTab === 'assigned' ? 'Packages sent to staff will appear here' :
                'Cancelled claims will appear here'}
             </p>
           </div>
@@ -438,6 +433,7 @@ export default function AdminDashboard() {
             {filteredDrops.map((drop) => {
               const tabConfig = TAB_CONFIG[activeTab]
               const isExpiringSoon = new Date(drop.expires_at).getTime() - Date.now() < 24 * 60 * 60 * 1000
+              const hasLocation = !!drop.claim_location_id
 
               return (
                 <div
@@ -446,10 +442,8 @@ export default function AdminDashboard() {
                     isExpiringSoon && activeTab !== 'cancelled' ? 'ring-2 ring-yellow-500/50' : ''
                   }`}
                   onClick={() => {
-                    if (activeTab === 'new') {
-                      setSelectedDrop(drop)
-                      setShowLocationModal(true)
-                    }
+                    setSelectedDrop(drop)
+                    setShowModal(true)
                   }}
                 >
                   {/* Header */}
@@ -493,10 +487,15 @@ export default function AdminDashboard() {
                   )}
 
                   {/* Location */}
-                  {drop.claim_location_name && (
+                  {drop.claim_location_name ? (
                     <div className="flex items-center gap-2 mb-3">
                       <MapPin className="w-4 h-4 text-purple-400" />
                       <span className="text-sm text-purple-400">{drop.claim_location_name}</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 mb-3">
+                      <MapPin className="w-4 h-4 text-yellow-500" />
+                      <span className="text-sm text-yellow-500">No location selected</span>
                     </div>
                   )}
 
@@ -531,24 +530,30 @@ export default function AdminDashboard() {
 
                   {/* Price & Action */}
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-[#a1a1a1]">Total</span>
-                    <span className="font-semibold text-[#D4AF37]">
+                    <span className="text-[#a1a1a1]">Final Price</span>
+                    <span className="font-semibold text-[#D4AF37] text-lg">
                       ${drop.final_price?.toFixed(2) || '0.00'}
                     </span>
                   </div>
 
-                  {activeTab === 'new' && (
+                  {activeTab === 'new' && hasLocation && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
                         setSelectedDrop(drop)
-                        setShowLocationModal(true)
+                        setShowModal(true)
                       }}
                       className="w-full mt-3 py-2 px-4 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
                     >
-                      <Send className="w-4 h-4" />
-                      Assign to Location
+                      <Package className="w-4 h-4" />
+                      Package Ready
                     </button>
+                  )}
+
+                  {activeTab === 'new' && !hasLocation && (
+                    <div className="w-full mt-3 py-2 px-4 bg-[#333] text-[#666] font-medium rounded-lg text-center text-sm">
+                      Waiting for location selection
+                    </div>
                   )}
                 </div>
               )
@@ -557,21 +562,20 @@ export default function AdminDashboard() {
         )}
       </main>
 
-      {/* Location Assignment Modal */}
-      {showLocationModal && selectedDrop && (
+      {/* Package Ready Modal */}
+      {showModal && selectedDrop && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-end sm:items-center justify-center p-4">
           <div className="bg-[#1a1a1a] border border-purple-500/30 rounded-xl w-full max-w-lg max-h-[90vh] overflow-auto">
             {/* Modal Header */}
             <div className="sticky top-0 bg-[#1a1a1a] border-b border-[#333] p-4 flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-white">Assign to Location</h2>
-                <p className="text-xs text-[#a1a1a1]">{selectedDrop.certificate_number}</p>
+                <h2 className="text-lg font-semibold text-white">Package Details</h2>
+                <p className="text-xs text-[#a1a1a1]">Review and send to staff</p>
               </div>
               <button
                 onClick={() => {
-                  setShowLocationModal(false)
+                  setShowModal(false)
                   setSelectedDrop(null)
-                  setSelectedLocation('')
                   setAdminNotes('')
                 }}
                 className="p-2 text-[#a1a1a1] hover:text-white transition-colors"
@@ -582,71 +586,163 @@ export default function AdminDashboard() {
 
             {/* Modal Content */}
             <div className="p-4 space-y-4">
-              {/* Customer Info */}
-              <div className="bg-[#0a0a0a] rounded-lg p-4">
-                <h3 className="text-sm font-semibold text-white mb-2">Customer</h3>
-                <p className="text-sm text-white">{selectedDrop.customer_name}</p>
-                {selectedDrop.customer_phone && (
-                  <p className="text-sm text-[#a1a1a1]">{selectedDrop.customer_phone}</p>
+              {/* Certificate Number - Large & Copyable */}
+              <div className="bg-[#D4AF37]/10 border border-[#D4AF37]/30 rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-[#D4AF37] mb-1">Certificate Number</p>
+                    <p className="text-2xl font-mono font-bold text-[#D4AF37]">
+                      {selectedDrop.certificate_number}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => copyToClipboard(selectedDrop.certificate_number, 'cert')}
+                    className="p-3 bg-[#D4AF37]/20 rounded-lg hover:bg-[#D4AF37]/30 transition-colors"
+                  >
+                    {copiedField === 'cert' ? (
+                      <Check className="w-5 h-5 text-green-500" />
+                    ) : (
+                      <Copy className="w-5 h-5 text-[#D4AF37]" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Pickup Location - Pre-filled */}
+              <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-4">
+                <div className="flex items-center gap-3">
+                  <MapPin className="w-6 h-6 text-purple-400" />
+                  <div>
+                    <p className="text-xs text-purple-300 mb-1">Pickup Location</p>
+                    <p className="text-lg font-semibold text-purple-400">
+                      {selectedDrop.claim_location_name || 'Not selected'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Final Price - Large */}
+              <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <DollarSign className="w-6 h-6 text-green-400" />
+                    <div>
+                      <p className="text-xs text-green-300 mb-1">Final Price (with coupons)</p>
+                      <p className="text-3xl font-bold text-green-400">
+                        ${selectedDrop.final_price?.toFixed(2) || '0.00'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => copyToClipboard(`$${selectedDrop.final_price?.toFixed(2) || '0.00'}`, 'price')}
+                    className="p-3 bg-green-500/20 rounded-lg hover:bg-green-500/30 transition-colors"
+                  >
+                    {copiedField === 'price' ? (
+                      <Check className="w-5 h-5 text-green-500" />
+                    ) : (
+                      <Copy className="w-5 h-5 text-green-400" />
+                    )}
+                  </button>
+                </div>
+                {selectedDrop.original_price && selectedDrop.original_price !== selectedDrop.final_price && (
+                  <p className="text-sm text-[#666] mt-2 line-through">
+                    Original: ${selectedDrop.original_price?.toFixed(2)}
+                  </p>
                 )}
               </div>
 
-              {/* Package Info */}
+              {/* Package Items - Larger */}
               <div className="bg-[#0a0a0a] rounded-lg p-4">
-                <h3 className="text-sm font-semibold text-white mb-2">Package</h3>
-                <p className="text-sm text-white">{selectedDrop.package_name}</p>
-                <p className="text-sm text-[#D4AF37]">${selectedDrop.final_price?.toFixed(2)}</p>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                    <Package className="w-4 h-4 text-[#D4AF37]" />
+                    Package Items
+                  </h3>
+                  <button
+                    onClick={() => {
+                      const itemsText = selectedDrop.package_items
+                        ?.map((item: any) => `${item.quantity}x ${item.name}`)
+                        .join('\n') || selectedDrop.package_name
+                      copyToClipboard(itemsText, 'items')
+                    }}
+                    className="p-2 bg-[#333] rounded hover:bg-[#444] transition-colors"
+                  >
+                    {copiedField === 'items' ? (
+                      <Check className="w-4 h-4 text-green-500" />
+                    ) : (
+                      <Copy className="w-4 h-4 text-[#a1a1a1]" />
+                    )}
+                  </button>
+                </div>
+                <p className="text-base font-medium text-white mb-3">{selectedDrop.package_name}</p>
+                {selectedDrop.package_items && selectedDrop.package_items.length > 0 && (
+                  <div className="space-y-2 border-t border-[#333] pt-3">
+                    {selectedDrop.package_items.map((item: any, i: number) => (
+                      <div key={i} className="flex items-center justify-between text-base">
+                        <span className="text-white">{item.name}</span>
+                        <span className="font-semibold text-[#D4AF37]">x{item.quantity}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
-              {/* Location Selection */}
-              <div>
-                <label className="block text-sm font-medium text-white mb-2">
-                  Select Location *
-                </label>
-                <select
-                  value={selectedLocation}
-                  onChange={(e) => setSelectedLocation(e.target.value)}
-                  className="w-full bg-[#0a0a0a] border border-[#333] rounded-lg px-4 py-3 text-white focus:outline-none focus:border-purple-500 transition-colors"
-                >
-                  <option value="">Choose a location...</option>
-                  {locations.map((loc) => (
-                    <option key={loc.id} value={loc.id}>
-                      {loc.full_name || loc.name}
-                    </option>
-                  ))}
-                </select>
+              {/* Customer Info */}
+              <div className="bg-[#0a0a0a] rounded-lg p-4">
+                <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+                  <User className="w-4 h-4 text-[#D4AF37]" />
+                  Customer
+                </h3>
+                <p className="text-base text-white">{selectedDrop.customer_name}</p>
+                {selectedDrop.customer_phone && (
+                  <p className="text-sm text-[#a1a1a1] mt-1">{selectedDrop.customer_phone}</p>
+                )}
               </div>
 
               {/* Admin Notes */}
               <div>
                 <label className="block text-sm font-medium text-white mb-2">
-                  Notes (optional)
+                  Notes for Staff (optional)
                 </label>
                 <textarea
                   value={adminNotes}
                   onChange={(e) => setAdminNotes(e.target.value)}
                   placeholder="Add notes for the staff..."
                   className="w-full bg-[#0a0a0a] border border-[#333] rounded-lg px-4 py-3 text-white placeholder-[#666] focus:outline-none focus:border-purple-500 transition-colors resize-none"
-                  rows={3}
+                  rows={2}
                 />
               </div>
             </div>
 
             {/* Modal Actions */}
             <div className="sticky bottom-0 bg-[#1a1a1a] border-t border-[#333] p-4 space-y-2">
-              <button
-                onClick={assignToLocation}
-                disabled={!selectedLocation}
-                className="w-full py-3 px-4 bg-purple-600 hover:bg-purple-700 disabled:bg-[#333] disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
-              >
-                <Send className="w-5 h-5" />
-                Assign & Send to Staff
-              </button>
+              {selectedDrop.claim_location_id ? (
+                <button
+                  onClick={markPackageReady}
+                  disabled={isSending}
+                  className="w-full py-3 px-4 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-600/50 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  {isSending ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-5 h-5" />
+                      Package Ready - Send to Staff
+                    </>
+                  )}
+                </button>
+              ) : (
+                <div className="w-full py-3 px-4 bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 font-medium rounded-lg text-center">
+                  Customer has not selected a pickup location yet
+                </div>
+              )}
               <button
                 onClick={() => {
-                  setShowLocationModal(false)
+                  setShowModal(false)
                   setSelectedDrop(null)
-                  setSelectedLocation('')
                   setAdminNotes('')
                 }}
                 className="w-full py-3 px-4 bg-[#333] text-white font-medium rounded-lg hover:bg-[#444] transition-colors"

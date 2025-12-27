@@ -439,6 +439,7 @@ export default function QueuePage() {
 
   const updateOrderStatus = async (certificateId: string, status: TabType) => {
     try {
+      console.log('Updating order status:', { certificateId, status })
       const updates: Record<string, unknown> = { order_status: status }
 
       if (status === 'preparing') {
@@ -451,21 +452,39 @@ export default function QueuePage() {
         updates.redeemed_location = location?.full_name || location?.name
       }
 
-      const { error } = await supabase
+      console.log('Update payload:', updates)
+
+      const { data, error } = await supabase
         .from('certificates')
         .update(updates)
         .eq('id', certificateId)
+        .select()
 
-      if (error) throw error
+      console.log('Update result:', { data, error })
+
+      if (error) {
+        console.error('Supabase error:', error)
+        alert(`Error updating status: ${error.message}`)
+        return
+      }
+
+      if (!data || data.length === 0) {
+        console.warn('No rows updated - may be RLS policy issue')
+        alert('Update failed - no rows affected. Check console for details.')
+        return
+      }
+
+      console.log('Update successful:', data)
 
       // Update will trigger realtime subscription, but also manually refresh
       if (location) {
-        fetchCertificates(location.id)
+        await fetchCertificates(location.id)
       }
       setSelectedCertificate(null)
       setScanResult(null)
     } catch (error) {
       console.error('Error updating order status:', error)
+      alert(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 
@@ -662,10 +681,10 @@ export default function QueuePage() {
                   {/* Header */}
                   <div className="flex items-start justify-between mb-3">
                     <div>
-                      <div className="flex items-center gap-2 text-[#D4AF37] mb-1">
+                      <div className="flex items-center gap-2 text-[#666] mb-1">
                         <Hash className="w-4 h-4" />
-                        <span className="font-mono text-sm font-semibold">
-                          {cert.certificate_number}
+                        <span className="font-mono text-sm">
+                          ••••••••••••
                         </span>
                       </div>
                       <p className="text-xs text-[#666]">
@@ -883,14 +902,14 @@ export default function QueuePage() {
             {/* Modal Header */}
             <div className="sticky top-0 bg-[#1a1a1a] border-b border-[#333] p-4 flex items-center justify-between">
               <div>
-                <div className="flex items-center gap-2 text-[#D4AF37]">
+                <div className="flex items-center gap-2 text-[#666]">
                   <Hash className="w-5 h-5" />
-                  <span className="font-mono font-semibold">
-                    {selectedCertificate.certificate_number}
+                  <span className="font-mono">
+                    Certificate Hidden
                   </span>
                 </div>
                 <p className="text-xs text-[#666] mt-1">
-                  Created {format(new Date(selectedCertificate.created_at), 'MMM d, yyyy h:mm a')}
+                  Scan to verify • Created {format(new Date(selectedCertificate.created_at), 'MMM d, yyyy h:mm a')}
                 </p>
               </div>
               <button
