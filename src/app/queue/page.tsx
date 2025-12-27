@@ -19,13 +19,15 @@ import {
   AlertTriangle,
   CheckCircle,
   XCircle,
-  Keyboard
+  Keyboard,
+  RotateCcw,
+  Ban
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Location, Certificate } from '@/types'
 import { format, formatDistanceToNow } from 'date-fns'
 
-type TabType = 'pending' | 'preparing' | 'ready' | 'picked_up'
+type TabType = 'pending' | 'preparing' | 'ready' | 'picked_up' | 'cancelled'
 
 // Tab configuration with colors and labels
 const TAB_CONFIG = {
@@ -64,6 +66,15 @@ const TAB_CONFIG = {
     textClass: 'text-[#a1a1a1]',
     borderClass: 'border-[#333]',
     description: 'Picked up today'
+  },
+  cancelled: {
+    label: 'Cancelled',
+    icon: Ban,
+    color: 'red',
+    bgClass: 'bg-red-500/10',
+    textClass: 'text-red-500',
+    borderClass: 'border-red-500/30',
+    description: 'Return inventory to floor'
   }
 }
 
@@ -99,7 +110,7 @@ export default function QueuePage() {
       today.setHours(0, 0, 0, 0)
       const todayISO = today.toISOString()
 
-      // Fetch active (unredeemed) orders
+      // Fetch active (unredeemed) orders - excluding cancelled
       const { data: activeOrders, error: activeError } = await supabase
         .from('certificates')
         .select(`
@@ -125,12 +136,46 @@ export default function QueuePage() {
             full_name
           )
         `)
-        .or(`claim_location_id.is.null,claim_location_id.eq.${locationId}`)
+        .eq('claim_location_id', locationId)
         .is('voided', false)
         .is('redeemed_at', null)
+        .neq('order_status', 'cancelled')
         .order('created_at', { ascending: true })
 
       if (activeError) throw activeError
+
+      // Fetch cancelled orders that need inventory returned
+      const { data: cancelledOrders, error: cancelledError } = await supabase
+        .from('certificates')
+        .select(`
+          *,
+          auctions (
+            id,
+            packages (
+              id,
+              name,
+              description,
+              items
+            )
+          ),
+          profiles:user_id (
+            id,
+            name,
+            username,
+            phone
+          ),
+          claim_location:claim_location_id (
+            id,
+            name,
+            full_name
+          )
+        `)
+        .eq('claim_location_id', locationId)
+        .eq('order_status', 'cancelled')
+        .eq('inventory_returned', false)
+        .order('cancelled_at', { ascending: true })
+
+      if (cancelledError) throw cancelledError
 
       // Fetch today's completed orders for this location
       const { data: completedOrders, error: completedError } = await supabase
@@ -158,7 +203,7 @@ export default function QueuePage() {
             full_name
           )
         `)
-        .or(`claim_location_id.is.null,claim_location_id.eq.${locationId}`)
+        .eq('claim_location_id', locationId)
         .is('voided', false)
         .not('redeemed_at', 'is', null)
         .gte('redeemed_at', todayISO)
@@ -166,8 +211,8 @@ export default function QueuePage() {
 
       if (completedError) throw completedError
 
-      // Combine active and completed orders
-      const allOrders = [...(activeOrders || []), ...(completedOrders || [])]
+      // Combine active, cancelled, and completed orders
+      const allOrders = [...(activeOrders || []), ...(cancelledOrders || []), ...(completedOrders || [])]
       setCertificates(allOrders)
       setLastUpdate(new Date())
     } catch (error) {
@@ -424,6 +469,29 @@ export default function QueuePage() {
     }
   }
 
+  const confirmInventoryReturned = async (certificateId: string) => {
+    try {
+      const { error } = await supabase
+        .from('certificates')
+        .update({
+          inventory_returned: true,
+          inventory_returned_at: new Date().toISOString(),
+          inventory_returned_by: location?.name || 'Staff'
+        })
+        .eq('id', certificateId)
+
+      if (error) throw error
+
+      // Refresh list
+      if (location) {
+        fetchCertificates(location.id)
+      }
+      setSelectedCertificate(null)
+    } catch (error) {
+      console.error('Error confirming inventory return:', error)
+    }
+  }
+
   const handleLogout = () => {
     sessionStorage.removeItem('staffAuthenticated')
     sessionStorage.removeItem('staffLocation')
@@ -441,6 +509,7 @@ export default function QueuePage() {
       preparing: certificates.filter(c => c.order_status === 'preparing').length,
       ready: certificates.filter(c => c.order_status === 'ready').length,
       picked_up: certificates.filter(c => c.order_status === 'picked_up').length,
+      cancelled: certificates.filter(c => c.order_status === 'cancelled').length,
     }
   }
 
@@ -503,7 +572,7 @@ export default function QueuePage() {
 
         {/* Status Tabs - More prominent */}
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
-          <div className="grid grid-cols-4 gap-2 pb-4">
+          <div className="grid grid-cols-5 gap-2 pb-4">
             {(Object.keys(TAB_CONFIG) as TabType[]).map((tabId) => {
               const tab = TAB_CONFIG[tabId]
               const TabIcon = tab.icon
@@ -539,6 +608,22 @@ export default function QueuePage() {
           </div>
         </div>
       </header>
+
+      {/* Cancelled Items Alert Banner */}
+      {counts.cancelled > 0 && activeTab !== 'cancelled' && (
+        <div
+          className="bg-red-500/20 border-b border-red-500/30 px-4 py-3 cursor-pointer hover:bg-red-500/30 transition-colors"
+          onClick={() => setActiveTab('cancelled')}
+        >
+          <div className="max-w-6xl mx-auto flex items-center gap-3 animate-pulse">
+            <Ban className="w-5 h-5 text-red-500" />
+            <span className="text-sm text-red-400 font-medium">
+              {counts.cancelled} cancelled order{counts.cancelled !== 1 ? 's' : ''} need inventory returned!
+            </span>
+            <span className="text-xs text-red-300 ml-auto">Tap to view →</span>
+          </div>
+        </div>
+      )}
 
       {/* Tab Description Banner */}
       <div className={`${TAB_CONFIG[activeTab].bgClass} border-b ${TAB_CONFIG[activeTab].borderClass} px-4 py-2`}>
@@ -902,6 +987,20 @@ export default function QueuePage() {
                   </p>
                 </div>
               )}
+
+              {selectedCertificate.order_status === 'cancelled' && (
+                <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 flex items-start gap-3">
+                  <Ban className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-red-500 font-medium">
+                      This order was cancelled (expired claim).
+                    </p>
+                    <p className="text-xs text-red-400 mt-1">
+                      Please return the items to inventory and confirm below.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Modal Actions */}
@@ -940,6 +1039,15 @@ export default function QueuePage() {
                     Order completed
                   </p>
                 </div>
+              )}
+              {selectedCertificate.order_status === 'cancelled' && (
+                <button
+                  onClick={() => confirmInventoryReturned(selectedCertificate.id)}
+                  className="w-full py-3 px-4 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  <RotateCcw className="w-5 h-5" />
+                  Confirm Inventory Returned
+                </button>
               )}
             </div>
           </div>

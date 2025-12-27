@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { MapPin, Store } from 'lucide-react'
+import { MapPin, Store, Shield } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Location } from '@/types'
 
@@ -32,8 +32,8 @@ export default function Home() {
     }
   }
 
-  const handleSelectLocation = (location: Location) => {
-    router.push(`/pin?location=${location.id}`)
+  const handleSelectLocation = (location: Location, isAdmin: boolean = false) => {
+    router.push(`/pin?location=${location.id}${isAdmin ? '&mode=admin' : ''}`)
   }
 
   return (
@@ -55,6 +55,29 @@ export default function Home() {
 
       {/* Main Content */}
       <main className="flex-1 max-w-4xl mx-auto w-full px-6 py-8">
+        {/* Admin Login Button */}
+        <div className="mb-8">
+          <button
+            onClick={() => router.push('/pin?mode=admin')}
+            className="w-full group relative bg-gradient-to-r from-purple-900/30 to-purple-800/30 border border-purple-500/30 rounded-xl p-6 text-left transition-all hover:border-purple-500 hover:from-purple-900/40 hover:to-purple-800/40 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-[#0a0a0a]"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-lg bg-purple-500/20 flex items-center justify-center flex-shrink-0 group-hover:bg-purple-500/30 transition-colors">
+                <Shield className="w-6 h-6 text-purple-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-lg font-semibold text-white mb-1 group-hover:text-purple-400 transition-colors">
+                  Admin Dashboard
+                </h3>
+                <p className="text-sm text-[#a1a1a1]">Manage all drops, assign to locations, view cancelled claims</p>
+              </div>
+              <svg className="w-5 h-5 text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </div>
+          </button>
+        </div>
+
         <div className="text-center mb-8">
           <h2 className="text-xl font-semibold text-white mb-2">Select Your Location</h2>
           <p className="text-[#a1a1a1]">Choose your store to view pending pickups</p>
