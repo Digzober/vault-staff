@@ -21,6 +21,8 @@ export interface Certificate {
   certificate_number: string
   qr_code_data: string
   expires_at: string
+  pickup_by: string | null
+  ready_at: string | null
   redeemed_at: string | null
   redeemed_location: string | null
   claim_location_id: string | null
