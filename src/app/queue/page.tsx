@@ -320,7 +320,8 @@ export default function QueuePage() {
         qrData = JSON.parse(decodedText)
       } catch {
         // Try to extract certificate number from URL or plain text
-        const certMatch = decodedText.match(/VLT-\d{8}-[A-Z0-9]{5}/i)
+        // Match both VLT-YYYYMMDD-XXXXX and VAULT-XXXXXXXX formats
+        const certMatch = decodedText.match(/(?:VLT-\d{8}-[A-Z0-9]{5}|VAULT-[A-Z0-9]+)/i)
         if (certMatch) {
           qrData = { cert: certMatch[0] }
         } else {
@@ -429,10 +430,11 @@ export default function QueuePage() {
 
     } catch (err) {
       console.error('QR scan error:', err)
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error'
       setScanResult({
         type: 'error',
         title: 'Scan Error',
-        message: 'Unable to process QR code. Please try again.'
+        message: `Unable to process QR code: ${errorMessage}`
       })
     }
   }
