@@ -417,40 +417,72 @@ export default function QueuePage() {
     }
   }
 
-  const updateOrderStatus = async (certificateId: string, status: TabType) => {
+  const updateOrderStatus = async (certificateId: string, status: TabType, certificateNumber?: string) => {
     try {
-      console.log('Updating order status:', { certificateId, status })
-      const updates: Record<string, unknown> = { order_status: status }
+      console.log('Updating order status:', { certificateId, status, certificateNumber })
 
-      if (status === 'picked_up') {
-        updates.picked_up_at = new Date().toISOString()
-        updates.redeemed_at = new Date().toISOString()
-        updates.redeemed_location = location?.full_name || location?.name
+      // For picked_up status, use the redeem_certificate RPC function to award XP
+      if (status === 'picked_up' && certificateNumber) {
+        const locationName = location?.full_name || location?.name || 'The Vault'
+        const { data: redeemResult, error: redeemError } = await supabase.rpc('redeem_certificate', {
+          p_certificate_number: certificateNumber,
+          p_location: locationName,
+          p_location_id: location?.id || null
+        })
+
+        console.log('Redeem result:', { redeemResult, redeemError })
+
+        if (redeemError) {
+          console.error('Redeem error:', redeemError)
+          alert(`Error redeeming pass: ${redeemError.message}`)
+          return
+        }
+
+        if (redeemResult && !redeemResult.success) {
+          alert(`Error: ${redeemResult.error}`)
+          return
+        }
+
+        // Also update order_status to picked_up
+        const { error: statusError } = await supabase
+          .from('certificates')
+          .update({ order_status: 'picked_up', picked_up_at: new Date().toISOString() })
+          .eq('id', certificateId)
+
+        if (statusError) {
+          console.error('Status update error:', statusError)
+          // Don't return - redemption succeeded, just status update failed
+        }
+
+        console.log('Redemption successful - XP awarded!')
+      } else {
+        // For other status updates, just update the order_status
+        const updates: Record<string, unknown> = { order_status: status }
+
+        console.log('Update payload:', updates)
+
+        const { data, error } = await supabase
+          .from('certificates')
+          .update(updates)
+          .eq('id', certificateId)
+          .select()
+
+        console.log('Update result:', { data, error })
+
+        if (error) {
+          console.error('Supabase error:', error)
+          alert(`Error updating status: ${error.message}`)
+          return
+        }
+
+        if (!data || data.length === 0) {
+          console.warn('No rows updated - may be RLS policy issue')
+          alert('Update failed - no rows affected. Check console for details.')
+          return
+        }
+
+        console.log('Update successful:', data)
       }
-
-      console.log('Update payload:', updates)
-
-      const { data, error } = await supabase
-        .from('certificates')
-        .update(updates)
-        .eq('id', certificateId)
-        .select()
-
-      console.log('Update result:', { data, error })
-
-      if (error) {
-        console.error('Supabase error:', error)
-        alert(`Error updating status: ${error.message}`)
-        return
-      }
-
-      if (!data || data.length === 0) {
-        console.warn('No rows updated - may be RLS policy issue')
-        alert('Update failed - no rows affected. Check console for details.')
-        return
-      }
-
-      console.log('Update successful:', data)
 
       // Update will trigger realtime subscription, but also manually refresh
       if (location) {
@@ -947,7 +979,7 @@ export default function QueuePage() {
             <div className="sticky bottom-0 bg-[#1a1a1a] border-t border-[#333] p-4 space-y-2">
               {selectedCertificate.order_status === 'ready' && (
                 <button
-                  onClick={() => updateOrderStatus(selectedCertificate.id, 'picked_up')}
+                  onClick={() => updateOrderStatus(selectedCertificate.id, 'picked_up', selectedCertificate.certificate_number)}
                   className="w-full py-3 px-4 bg-gradient-to-r from-[#F4D03F] to-[#B8960C] hover:from-[#D4AF37] hover:to-[#9a7b0a] text-black font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
                 >
                   <CheckCircle2 className="w-5 h-5" />
