@@ -4,51 +4,29 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Package,
-  Clock,
   CheckCircle2,
-  ChefHat,
   LogOut,
   RefreshCw,
   User,
   Phone,
   Hash,
   MapPin,
-  AlertCircle,
   ScanLine,
   X,
   AlertTriangle,
   CheckCircle,
   XCircle,
   Keyboard,
-  RotateCcw,
   Ban
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Location, Certificate } from '@/types'
 import { format, formatDistanceToNow } from 'date-fns'
 
-type TabType = 'pending' | 'preparing' | 'ready' | 'picked_up' | 'cancelled'
+type TabType = 'ready' | 'picked_up' | 'cancelled'
 
 // Tab configuration with colors and labels
 const TAB_CONFIG = {
-  pending: {
-    label: 'Pending',
-    icon: Clock,
-    color: 'yellow',
-    bgClass: 'bg-yellow-500/10',
-    textClass: 'text-yellow-500',
-    borderClass: 'border-yellow-500/30',
-    description: 'Awaiting preparation'
-  },
-  preparing: {
-    label: 'Preparing',
-    icon: ChefHat,
-    color: 'blue',
-    bgClass: 'bg-blue-500/10',
-    textClass: 'text-blue-500',
-    borderClass: 'border-blue-500/30',
-    description: 'Being prepared'
-  },
   ready: {
     label: 'Ready',
     icon: Package,
@@ -56,7 +34,7 @@ const TAB_CONFIG = {
     bgClass: 'bg-green-500/10',
     textClass: 'text-green-500',
     borderClass: 'border-green-500/30',
-    description: 'Ready for pickup'
+    description: 'Waiting for customer'
   },
   picked_up: {
     label: 'Completed',
@@ -74,7 +52,7 @@ const TAB_CONFIG = {
     bgClass: 'bg-red-500/10',
     textClass: 'text-red-500',
     borderClass: 'border-red-500/30',
-    description: 'Return inventory to floor'
+    description: 'Expired claims'
   }
 }
 
@@ -88,7 +66,7 @@ interface ScanResult {
 export default function QueuePage() {
   const [location, setLocation] = useState<Location | null>(null)
   const [certificates, setCertificates] = useState<Certificate[]>([])
-  const [activeTab, setActiveTab] = useState<TabType>('pending')
+  const [activeTab, setActiveTab] = useState<TabType>('ready')
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [selectedCertificate, setSelectedCertificate] = useState<Certificate | null>(null)
@@ -110,7 +88,7 @@ export default function QueuePage() {
       today.setHours(0, 0, 0, 0)
       const todayISO = today.toISOString()
 
-      // Fetch active (unredeemed) orders - excluding cancelled
+      // Fetch only READY orders (admin has set up POS discount)
       const { data: activeOrders, error: activeError } = await supabase
         .from('certificates')
         .select(`
@@ -139,12 +117,12 @@ export default function QueuePage() {
         .eq('claim_location_id', locationId)
         .is('voided', false)
         .is('redeemed_at', null)
-        .neq('order_status', 'cancelled')
+        .eq('order_status', 'ready')
         .order('created_at', { ascending: true })
 
       if (activeError) throw activeError
 
-      // Fetch cancelled orders that need inventory returned
+      // Fetch cancelled orders (expired claims)
       const { data: cancelledOrders, error: cancelledError } = await supabase
         .from('certificates')
         .select(`
@@ -172,8 +150,8 @@ export default function QueuePage() {
         `)
         .eq('claim_location_id', locationId)
         .eq('order_status', 'cancelled')
-        .eq('inventory_returned', false)
         .order('cancelled_at', { ascending: true })
+        .limit(50)
 
       if (cancelledError) throw cancelledError
 
@@ -444,11 +422,7 @@ export default function QueuePage() {
       console.log('Updating order status:', { certificateId, status })
       const updates: Record<string, unknown> = { order_status: status }
 
-      if (status === 'preparing') {
-        updates.prepared_at = null
-      } else if (status === 'ready') {
-        updates.prepared_at = new Date().toISOString()
-      } else if (status === 'picked_up') {
+      if (status === 'picked_up') {
         updates.picked_up_at = new Date().toISOString()
         updates.redeemed_at = new Date().toISOString()
         updates.redeemed_location = location?.full_name || location?.name
@@ -490,29 +464,6 @@ export default function QueuePage() {
     }
   }
 
-  const confirmInventoryReturned = async (certificateId: string) => {
-    try {
-      const { error } = await supabase
-        .from('certificates')
-        .update({
-          inventory_returned: true,
-          inventory_returned_at: new Date().toISOString(),
-          inventory_returned_by: location?.name || 'Staff'
-        })
-        .eq('id', certificateId)
-
-      if (error) throw error
-
-      // Refresh list
-      if (location) {
-        fetchCertificates(location.id)
-      }
-      setSelectedCertificate(null)
-    } catch (error) {
-      console.error('Error confirming inventory return:', error)
-    }
-  }
-
   const handleLogout = () => {
     sessionStorage.removeItem('staffAuthenticated')
     sessionStorage.removeItem('staffLocation')
@@ -520,14 +471,11 @@ export default function QueuePage() {
   }
 
   const filteredCertificates = certificates.filter(cert => {
-    const status = cert.order_status || 'pending'
-    return status === activeTab
+    return cert.order_status === activeTab
   })
 
   const getCounts = () => {
     return {
-      pending: certificates.filter(c => (c.order_status || 'pending') === 'pending').length,
-      preparing: certificates.filter(c => c.order_status === 'preparing').length,
       ready: certificates.filter(c => c.order_status === 'ready').length,
       picked_up: certificates.filter(c => c.order_status === 'picked_up').length,
       cancelled: certificates.filter(c => c.order_status === 'cancelled').length,
@@ -591,9 +539,9 @@ export default function QueuePage() {
           </div>
         </div>
 
-        {/* Status Tabs - More prominent */}
+        {/* Status Tabs */}
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
-          <div className="grid grid-cols-5 gap-2 pb-4">
+          <div className="grid grid-cols-3 gap-2 pb-4">
             {(Object.keys(TAB_CONFIG) as TabType[]).map((tabId) => {
               const tab = TAB_CONFIG[tabId]
               const TabIcon = tab.icon
@@ -630,21 +578,6 @@ export default function QueuePage() {
         </div>
       </header>
 
-      {/* Cancelled Items Alert Banner */}
-      {counts.cancelled > 0 && activeTab !== 'cancelled' && (
-        <div
-          className="bg-red-500/20 border-b border-red-500/30 px-4 py-3 cursor-pointer hover:bg-red-500/30 transition-colors"
-          onClick={() => setActiveTab('cancelled')}
-        >
-          <div className="max-w-6xl mx-auto flex items-center gap-3 animate-pulse">
-            <Ban className="w-5 h-5 text-red-500" />
-            <span className="text-sm text-red-400 font-medium">
-              {counts.cancelled} cancelled order{counts.cancelled !== 1 ? 's' : ''} need inventory returned!
-            </span>
-            <span className="text-xs text-red-300 ml-auto">Tap to view →</span>
-          </div>
-        </div>
-      )}
 
       {/* Tab Description Banner */}
       <div className={`${TAB_CONFIG[activeTab].bgClass} border-b ${TAB_CONFIG[activeTab].borderClass} px-4 py-2`}>
@@ -991,20 +924,11 @@ export default function QueuePage() {
               </div>
 
               {/* Status-specific messages */}
-              {(selectedCertificate.order_status || 'pending') === 'pending' && (
-                <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-sm text-yellow-500">
-                    This order is waiting to be prepared. Start preparing when you're ready.
-                  </p>
-                </div>
-              )}
-
               {selectedCertificate.order_status === 'ready' && (
                 <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 flex items-start gap-3">
                   <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
                   <p className="text-sm text-green-500">
-                    Order is ready! Complete pickup when customer arrives.
+                    Scan customer's pass to verify, then complete checkout in POS.
                   </p>
                 </div>
               )}
@@ -1012,38 +936,15 @@ export default function QueuePage() {
               {selectedCertificate.order_status === 'cancelled' && (
                 <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 flex items-start gap-3">
                   <Ban className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-sm text-red-500 font-medium">
-                      This order was cancelled (expired claim).
-                    </p>
-                    <p className="text-xs text-red-400 mt-1">
-                      Please return the items to inventory and confirm below.
-                    </p>
-                  </div>
+                  <p className="text-sm text-red-500 font-medium">
+                    This claim expired and was cancelled.
+                  </p>
                 </div>
               )}
             </div>
 
             {/* Modal Actions */}
             <div className="sticky bottom-0 bg-[#1a1a1a] border-t border-[#333] p-4 space-y-2">
-              {(selectedCertificate.order_status || 'pending') === 'pending' && (
-                <button
-                  onClick={() => updateOrderStatus(selectedCertificate.id, 'preparing')}
-                  className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
-                >
-                  <ChefHat className="w-5 h-5" />
-                  Start Preparing
-                </button>
-              )}
-              {selectedCertificate.order_status === 'preparing' && (
-                <button
-                  onClick={() => updateOrderStatus(selectedCertificate.id, 'ready')}
-                  className="w-full py-3 px-4 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
-                >
-                  <Package className="w-5 h-5" />
-                  Mark as Ready
-                </button>
-              )}
               {selectedCertificate.order_status === 'ready' && (
                 <button
                   onClick={() => updateOrderStatus(selectedCertificate.id, 'picked_up')}
@@ -1062,13 +963,11 @@ export default function QueuePage() {
                 </div>
               )}
               {selectedCertificate.order_status === 'cancelled' && (
-                <button
-                  onClick={() => confirmInventoryReturned(selectedCertificate.id)}
-                  className="w-full py-3 px-4 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
-                >
-                  <RotateCcw className="w-5 h-5" />
-                  Confirm Inventory Returned
-                </button>
+                <div className="text-center py-2">
+                  <p className="text-sm text-red-400">
+                    This claim has expired
+                  </p>
+                </div>
               )}
             </div>
           </div>
