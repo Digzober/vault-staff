@@ -17,32 +17,35 @@ import {
   CheckCircle,
   XCircle,
   Keyboard,
-  Ban
+  Ban,
+  DollarSign,
+  FileText,
+  Clock
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Location, Certificate } from '@/types'
 import { format, formatDistanceToNow } from 'date-fns'
 
-type TabType = 'ready' | 'picked_up' | 'cancelled'
+type TabType = 'active' | 'redeemed' | 'cancelled'
 
 // Tab configuration with colors and labels
 const TAB_CONFIG = {
-  ready: {
-    label: 'Ready',
-    icon: Package,
+  active: {
+    label: 'Active',
+    icon: Clock,
+    color: 'gold',
+    bgClass: 'bg-[#D4AF37]/10',
+    textClass: 'text-[#D4AF37]',
+    borderClass: 'border-[#D4AF37]/30',
+    description: 'Ready for customer pickup'
+  },
+  redeemed: {
+    label: 'Completed',
+    icon: CheckCircle2,
     color: 'green',
     bgClass: 'bg-green-500/10',
     textClass: 'text-green-500',
     borderClass: 'border-green-500/30',
-    description: 'Waiting for customer'
-  },
-  picked_up: {
-    label: 'Completed',
-    icon: CheckCircle2,
-    color: 'gray',
-    bgClass: 'bg-[#333]',
-    textClass: 'text-[#a1a1a1]',
-    borderClass: 'border-[#333]',
     description: 'Picked up today'
   },
   cancelled: {
@@ -52,7 +55,7 @@ const TAB_CONFIG = {
     bgClass: 'bg-red-500/10',
     textClass: 'text-red-500',
     borderClass: 'border-red-500/30',
-    description: 'Expired claims'
+    description: 'Expired or voided claims'
   }
 }
 
@@ -66,7 +69,7 @@ interface ScanResult {
 export default function QueuePage() {
   const [location, setLocation] = useState<Location | null>(null)
   const [certificates, setCertificates] = useState<Certificate[]>([])
-  const [activeTab, setActiveTab] = useState<TabType>('ready')
+  const [activeTab, setActiveTab] = useState<TabType>('active')
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [selectedCertificate, setSelectedCertificate] = useState<Certificate | null>(null)
@@ -74,12 +77,13 @@ export default function QueuePage() {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null)
   const [scannerInput, setScannerInput] = useState('')
   const [isProcessingScan, setIsProcessingScan] = useState(false)
+  const [dutchieTransactionId, setDutchieTransactionId] = useState('')
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
   const router = useRouter()
   const scannerInputRef = useRef<HTMLInputElement>(null)
 
-  // Fetch certificates with proper error handling
-  const fetchCertificates = useCallback(async (locationId: string) => {
+  // Fetch certificates - show ALL active certs, not just this location's
+  const fetchCertificates = useCallback(async () => {
     try {
       setIsRefreshing(true)
 
@@ -88,17 +92,19 @@ export default function QueuePage() {
       today.setHours(0, 0, 0, 0)
       const todayISO = today.toISOString()
 
-      // Fetch only READY orders (admin has set up POS discount)
+      // Fetch all ACTIVE orders (immediately ready for pickup)
       const { data: activeOrders, error: activeError } = await supabase
         .from('certificates')
         .select(`
           *,
           auctions (
             id,
+            current_price,
             packages (
               id,
               name,
               description,
+              retail_value,
               items
             )
           ),
@@ -107,32 +113,28 @@ export default function QueuePage() {
             name,
             username,
             phone
-          ),
-          claim_location:claim_location_id (
-            id,
-            name,
-            full_name
           )
         `)
-        .eq('claim_location_id', locationId)
         .is('voided', false)
         .is('redeemed_at', null)
-        .eq('order_status', 'ready')
+        .eq('order_status', 'active')
         .order('created_at', { ascending: true })
 
       if (activeError) throw activeError
 
-      // Fetch cancelled orders (expired claims)
+      // Fetch cancelled/expired orders
       const { data: cancelledOrders, error: cancelledError } = await supabase
         .from('certificates')
         .select(`
           *,
           auctions (
             id,
+            current_price,
             packages (
               id,
               name,
               description,
+              retail_value,
               items
             )
           ),
@@ -141,31 +143,27 @@ export default function QueuePage() {
             name,
             username,
             phone
-          ),
-          claim_location:claim_location_id (
-            id,
-            name,
-            full_name
           )
         `)
-        .eq('claim_location_id', locationId)
-        .eq('order_status', 'cancelled')
-        .order('cancelled_at', { ascending: true })
+        .or('order_status.eq.cancelled,order_status.eq.expired')
+        .order('created_at', { ascending: false })
         .limit(50)
 
       if (cancelledError) throw cancelledError
 
-      // Fetch today's completed orders for this location
+      // Fetch today's completed orders
       const { data: completedOrders, error: completedError } = await supabase
         .from('certificates')
         .select(`
           *,
           auctions (
             id,
+            current_price,
             packages (
               id,
               name,
               description,
+              retail_value,
               items
             )
           ),
@@ -174,22 +172,16 @@ export default function QueuePage() {
             name,
             username,
             phone
-          ),
-          claim_location:claim_location_id (
-            id,
-            name,
-            full_name
           )
         `)
-        .eq('claim_location_id', locationId)
         .is('voided', false)
-        .not('redeemed_at', 'is', null)
+        .eq('order_status', 'redeemed')
         .gte('redeemed_at', todayISO)
         .order('redeemed_at', { ascending: false })
 
       if (completedError) throw completedError
 
-      // Combine active, cancelled, and completed orders
+      // Combine all orders
       const allOrders = [...(activeOrders || []), ...(cancelledOrders || []), ...(completedOrders || [])]
       setCertificates(allOrders)
       setLastUpdate(new Date())
@@ -213,9 +205,9 @@ export default function QueuePage() {
 
     const parsedLocation = JSON.parse(locationData)
     setLocation(parsedLocation)
-    fetchCertificates(parsedLocation.id)
+    fetchCertificates()
 
-    // Set up realtime subscription with better event handling
+    // Set up realtime subscription
     const channel = supabase
       .channel('certificates-realtime')
       .on(
@@ -225,9 +217,8 @@ export default function QueuePage() {
           schema: 'public',
           table: 'certificates',
         },
-        (payload) => {
-          console.log('New certificate:', payload)
-          fetchCertificates(parsedLocation.id)
+        () => {
+          fetchCertificates()
         }
       )
       .on(
@@ -237,21 +228,8 @@ export default function QueuePage() {
           schema: 'public',
           table: 'certificates',
         },
-        (payload) => {
-          console.log('Certificate updated:', payload)
-          fetchCertificates(parsedLocation.id)
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'DELETE',
-          schema: 'public',
-          table: 'certificates',
-        },
-        (payload) => {
-          console.log('Certificate deleted:', payload)
-          fetchCertificates(parsedLocation.id)
+        () => {
+          fetchCertificates()
         }
       )
       .subscribe((status) => {
@@ -268,7 +246,6 @@ export default function QueuePage() {
     setShowScanner(true)
     setScanResult(null)
     setScannerInput('')
-    // Focus the input after a short delay to let the modal render
     setTimeout(() => {
       scannerInputRef.current?.focus()
     }, 100)
@@ -280,7 +257,7 @@ export default function QueuePage() {
     setScannerInput('')
   }
 
-  // Handle scanner input (works with handheld scanners that emulate keyboard)
+  // Handle scanner input
   const handleScannerSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!scannerInput.trim() || isProcessingScan) return
@@ -292,13 +269,10 @@ export default function QueuePage() {
 
   const processScannedData = async (decodedText: string) => {
     try {
-      // Parse QR data
       let qrData: any
       try {
         qrData = JSON.parse(decodedText)
       } catch {
-        // Try to extract certificate number from URL or plain text
-        // Match both VLT-YYYYMMDD-XXXXX and VAULT-XXXXXXXX formats
         const certMatch = decodedText.match(/(?:VLT-\d{8}-[A-Z0-9]{5}|VAULT-[A-Z0-9]+)/i)
         if (certMatch) {
           qrData = { cert: certMatch[0] }
@@ -324,10 +298,12 @@ export default function QueuePage() {
           *,
           auctions (
             id,
+            current_price,
             packages (
               id,
               name,
               description,
+              retail_value,
               items
             )
           ),
@@ -336,11 +312,6 @@ export default function QueuePage() {
             name,
             username,
             phone
-          ),
-          claim_location:claim_location_id (
-            id,
-            name,
-            full_name
           )
         `)
         .eq('certificate_number', certNumber)
@@ -356,7 +327,7 @@ export default function QueuePage() {
       }
 
       // Check if already redeemed
-      if (cert.redeemed_at) {
+      if (cert.redeemed_at || cert.order_status === 'redeemed') {
         setScanResult({
           type: 'error',
           title: 'Already Claimed',
@@ -366,7 +337,7 @@ export default function QueuePage() {
       }
 
       // Check if voided
-      if (cert.voided) {
+      if (cert.voided || cert.order_status === 'cancelled') {
         setScanResult({
           type: 'error',
           title: 'Pass Voided',
@@ -376,7 +347,7 @@ export default function QueuePage() {
       }
 
       // Check if expired
-      if (new Date(cert.expires_at) < new Date()) {
+      if (cert.order_status === 'expired' || new Date(cert.expires_at) < new Date()) {
         setScanResult({
           type: 'error',
           title: 'Pass Expired',
@@ -385,24 +356,17 @@ export default function QueuePage() {
         return
       }
 
-      // Check location restriction
-      const claimLocation = Array.isArray(cert.claim_location) ? cert.claim_location[0] : cert.claim_location
-
-      if (cert.claim_location_id && cert.claim_location_id !== location?.id) {
-        setScanResult({
-          type: 'warning',
-          title: 'Wrong Location',
-          message: `This pass is assigned to ${claimLocation?.full_name || claimLocation?.name || 'another location'}. It cannot be claimed here.`,
-          certificate: cert
-        })
-        return
-      }
-
       // Success!
+      const retailValue = cert.auctions?.packages?.retail_value || 0
+      const paidPrice = cert.auctions?.current_price || 0
+      const discount = retailValue - paidPrice
+
       setScanResult({
         type: 'success',
         title: 'Valid Pass',
-        message: `Ready to process: ${cert.auctions?.packages?.name || 'Package'}`,
+        message: discount > 0
+          ? `Apply $${discount.toFixed(2)} discount in Dutchie POS`
+          : `Ready to process: ${cert.auctions?.packages?.name || 'Package'}`,
         certificate: cert
       })
 
@@ -417,81 +381,40 @@ export default function QueuePage() {
     }
   }
 
-  const updateOrderStatus = async (certificateId: string, status: TabType, certificateNumber?: string) => {
+  const completePickup = async (certificateId: string, certificateNumber: string) => {
+    if (!dutchieTransactionId.trim()) {
+      alert('Please enter the Dutchie Transaction ID before completing pickup.')
+      return
+    }
+
     try {
-      console.log('Updating order status:', { certificateId, status, certificateNumber })
+      const locationName = location?.full_name || location?.name || 'The Vault'
+      const { data: redeemResult, error: redeemError } = await supabase.rpc('redeem_certificate', {
+        p_certificate_number: certificateNumber,
+        p_location: locationName,
+        p_location_id: location?.id || null,
+        p_dutchie_transaction_id: dutchieTransactionId.trim(),
+        p_redeemed_by_staff: null
+      })
 
-      // For picked_up status, use the redeem_certificate RPC function to award XP
-      if (status === 'picked_up' && certificateNumber) {
-        const locationName = location?.full_name || location?.name || 'The Vault'
-        const { data: redeemResult, error: redeemError } = await supabase.rpc('redeem_certificate', {
-          p_certificate_number: certificateNumber,
-          p_location: locationName,
-          p_location_id: location?.id || null
-        })
-
-        console.log('Redeem result:', { redeemResult, redeemError })
-
-        if (redeemError) {
-          console.error('Redeem error:', redeemError)
-          alert(`Error redeeming pass: ${redeemError.message}`)
-          return
-        }
-
-        if (redeemResult && !redeemResult.success) {
-          alert(`Error: ${redeemResult.error}`)
-          return
-        }
-
-        // Also update order_status to picked_up
-        const { error: statusError } = await supabase
-          .from('certificates')
-          .update({ order_status: 'picked_up', picked_up_at: new Date().toISOString() })
-          .eq('id', certificateId)
-
-        if (statusError) {
-          console.error('Status update error:', statusError)
-          // Don't return - redemption succeeded, just status update failed
-        }
-
-        console.log('Redemption successful - XP awarded!')
-      } else {
-        // For other status updates, just update the order_status
-        const updates: Record<string, unknown> = { order_status: status }
-
-        console.log('Update payload:', updates)
-
-        const { data, error } = await supabase
-          .from('certificates')
-          .update(updates)
-          .eq('id', certificateId)
-          .select()
-
-        console.log('Update result:', { data, error })
-
-        if (error) {
-          console.error('Supabase error:', error)
-          alert(`Error updating status: ${error.message}`)
-          return
-        }
-
-        if (!data || data.length === 0) {
-          console.warn('No rows updated - may be RLS policy issue')
-          alert('Update failed - no rows affected. Check console for details.')
-          return
-        }
-
-        console.log('Update successful:', data)
+      if (redeemError) {
+        console.error('Redeem error:', redeemError)
+        alert(`Error redeeming pass: ${redeemError.message}`)
+        return
       }
 
-      // Update will trigger realtime subscription, but also manually refresh
-      if (location) {
-        await fetchCertificates(location.id)
+      if (redeemResult && !redeemResult.success) {
+        alert(`Error: ${redeemResult.error}`)
+        return
       }
+
+      // Refresh and close
+      await fetchCertificates()
       setSelectedCertificate(null)
       setScanResult(null)
+      setDutchieTransactionId('')
     } catch (error) {
-      console.error('Error updating order status:', error)
+      console.error('Error completing pickup:', error)
       alert(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
@@ -503,14 +426,17 @@ export default function QueuePage() {
   }
 
   const filteredCertificates = certificates.filter(cert => {
-    return cert.order_status === activeTab
+    if (activeTab === 'active') return cert.order_status === 'active'
+    if (activeTab === 'redeemed') return cert.order_status === 'redeemed'
+    if (activeTab === 'cancelled') return cert.order_status === 'cancelled' || cert.order_status === 'expired'
+    return false
   })
 
   const getCounts = () => {
     return {
-      ready: certificates.filter(c => c.order_status === 'ready').length,
-      picked_up: certificates.filter(c => c.order_status === 'picked_up').length,
-      cancelled: certificates.filter(c => c.order_status === 'cancelled').length,
+      active: certificates.filter(c => c.order_status === 'active').length,
+      redeemed: certificates.filter(c => c.order_status === 'redeemed').length,
+      cancelled: certificates.filter(c => c.order_status === 'cancelled' || c.order_status === 'expired').length,
     }
   }
 
@@ -554,7 +480,7 @@ export default function QueuePage() {
                 <span className="hidden sm:inline">Scan</span>
               </button>
               <button
-                onClick={() => location && fetchCertificates(location.id)}
+                onClick={() => fetchCertificates()}
                 disabled={isRefreshing}
                 className="p-2 text-[#a1a1a1] hover:text-white transition-colors disabled:opacity-50"
               >
@@ -619,7 +545,7 @@ export default function QueuePage() {
             return <TabIcon className={`w-4 h-4 ${TAB_CONFIG[activeTab].textClass}`} />
           })()}
           <span className={`text-sm ${TAB_CONFIG[activeTab].textClass}`}>
-            {TAB_CONFIG[activeTab].description} • {filteredCertificates.length} order{filteredCertificates.length !== 1 ? 's' : ''}
+            {TAB_CONFIG[activeTab].description} &bull; {filteredCertificates.length} order{filteredCertificates.length !== 1 ? 's' : ''}
           </span>
         </div>
       </div>
@@ -639,10 +565,16 @@ export default function QueuePage() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {filteredCertificates.map((cert) => {
               const tabConfig = TAB_CONFIG[activeTab]
+              const retailValue = cert.auctions?.packages?.retail_value || 0
+              const paidPrice = cert.auctions?.current_price || 0
+              const discount = retailValue - paidPrice
               return (
                 <div
                   key={cert.id}
-                  onClick={() => setSelectedCertificate(cert)}
+                  onClick={() => {
+                    setSelectedCertificate(cert)
+                    setDutchieTransactionId('')
+                  }}
                   className={`bg-[#1a1a1a] border rounded-xl p-4 cursor-pointer hover:border-[#D4AF37] transition-all ${tabConfig.borderClass}`}
                 >
                   {/* Header */}
@@ -650,8 +582,8 @@ export default function QueuePage() {
                     <div>
                       <div className="flex items-center gap-2 text-[#666] mb-1">
                         <Hash className="w-4 h-4" />
-                        <span className="font-mono text-sm">
-                          ••••••••••••
+                        <span className="font-mono text-sm text-[#666]">
+                          &bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;
                         </span>
                       </div>
                       <p className="text-xs text-[#666]">
@@ -680,7 +612,7 @@ export default function QueuePage() {
                       <div className="space-y-1">
                         {cert.auctions.packages.items.slice(0, 3).map((item: any, i: number) => (
                           <p key={i} className="text-xs text-[#a1a1a1]">
-                            • {item.quantity}x {item.name}
+                            &bull; {item.quantity}x {item.name}
                           </p>
                         ))}
                         {cert.auctions.packages.items.length > 3 && (
@@ -692,13 +624,29 @@ export default function QueuePage() {
                     )}
                   </div>
 
+                  {/* Discount Display */}
+                  {discount > 0 && activeTab === 'active' && (
+                    <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-2 mb-3 text-center">
+                      <p className="text-xs text-[#a1a1a1]">Dutchie Discount</p>
+                      <p className="text-lg font-bold text-green-400">${discount.toFixed(2)} OFF</p>
+                    </div>
+                  )}
+
                   {/* Price */}
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-[#a1a1a1]">Total</span>
+                    <span className="text-[#a1a1a1]">Paid</span>
                     <span className="font-semibold text-[#D4AF37]">
-                      ${cert.final_price?.toFixed(2) || cert.original_price?.toFixed(2) || '0.00'}
+                      ${paidPrice.toFixed(2)}
                     </span>
                   </div>
+
+                  {/* Dutchie TX ID for completed */}
+                  {cert.dutchie_transaction_id && (
+                    <div className="flex items-center gap-1.5 mt-2 text-xs text-blue-400">
+                      <FileText className="w-3 h-3" />
+                      <span className="font-mono truncate">TX: {cert.dutchie_transaction_id}</span>
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -706,7 +654,7 @@ export default function QueuePage() {
         )}
       </main>
 
-      {/* Scanner Modal - Works with handheld barcode scanners */}
+      {/* Scanner Modal */}
       {showScanner && (
         <div className="fixed inset-0 bg-black/95 z-50 flex flex-col">
           {/* Scanner Header */}
@@ -727,7 +675,6 @@ export default function QueuePage() {
           <div className="flex-1 flex flex-col items-center justify-center p-4">
             {!scanResult ? (
               <div className="w-full max-w-md">
-                {/* Scanner Input */}
                 <form onSubmit={handleScannerSubmit} className="space-y-4">
                   <div className="bg-[#1a1a1a] border-2 border-[#D4AF37] rounded-xl p-6">
                     <div className="flex items-center gap-3 mb-4">
@@ -828,6 +775,18 @@ export default function QueuePage() {
                           {scanResult.certificate.auctions?.packages?.name || 'Package'}
                         </span>
                       </div>
+                      {/* Show discount prominently */}
+                      {(() => {
+                        const rv = scanResult.certificate.auctions?.packages?.retail_value || 0
+                        const pp = scanResult.certificate.auctions?.current_price || 0
+                        const disc = rv - pp
+                        return disc > 0 ? (
+                          <div className="bg-green-500/20 border border-green-500/30 rounded-lg p-3 text-center mt-2">
+                            <p className="text-xs text-[#a1a1a1]">Apply in Dutchie POS</p>
+                            <p className="text-2xl font-bold text-green-400">${disc.toFixed(2)} OFF</p>
+                          </div>
+                        ) : null
+                      })()}
                     </div>
                   )}
                 </div>
@@ -838,6 +797,7 @@ export default function QueuePage() {
                     <button
                       onClick={() => {
                         setSelectedCertificate(scanResult.certificate!)
+                        setDutchieTransactionId('')
                         setShowScanner(false)
                       }}
                       className="w-full py-3 px-4 bg-[#D4AF37] text-black font-semibold rounded-lg hover:bg-[#B8960C] transition-colors"
@@ -876,7 +836,7 @@ export default function QueuePage() {
                   </span>
                 </div>
                 <p className="text-xs text-[#666] mt-1">
-                  Scan to verify • Created {format(new Date(selectedCertificate.created_at), 'MMM d, yyyy h:mm a')}
+                  Scan to verify &bull; Created {format(new Date(selectedCertificate.created_at), 'MMM d, yyyy h:mm a')}
                 </p>
               </div>
               <button
@@ -891,8 +851,8 @@ export default function QueuePage() {
             <div className="p-4 space-y-4">
               {/* Status Badge */}
               {(() => {
-                const status = (selectedCertificate.order_status || 'pending') as TabType
-                const config = TAB_CONFIG[status]
+                const status = (selectedCertificate.order_status || 'active') as TabType
+                const config = TAB_CONFIG[status] || TAB_CONFIG.active
                 const StatusIcon = config.icon
                 return (
                   <div className={`flex items-center gap-2 px-4 py-3 rounded-lg ${config.bgClass} ${config.borderClass} border`}>
@@ -945,24 +905,58 @@ export default function QueuePage() {
                 )}
               </div>
 
-              {/* Pricing */}
-              <div className="bg-[#0a0a0a] rounded-lg p-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-[#a1a1a1]">Total Paid</span>
-                  <span className="text-xl font-bold text-[#D4AF37]">
-                    ${selectedCertificate.final_price?.toFixed(2) || selectedCertificate.original_price?.toFixed(2) || '0.00'}
-                  </span>
-                </div>
-              </div>
+              {/* Discount Display - GIANT */}
+              {(() => {
+                const retailValue = selectedCertificate.auctions?.packages?.retail_value || 0
+                const paidPrice = selectedCertificate.auctions?.current_price || 0
+                const discount = retailValue - paidPrice
+                return discount > 0 ? (
+                  <div className="bg-green-500/10 border-2 border-green-500/40 rounded-xl p-6 text-center">
+                    <p className="text-xs text-[#a1a1a1] uppercase tracking-wider mb-1">Apply This Discount in Dutchie</p>
+                    <p className="text-5xl font-bold text-green-400">${discount.toFixed(2)}</p>
+                    <p className="text-sm text-green-400/70 mt-1">OFF</p>
+                    <div className="flex items-center justify-between mt-3 pt-3 border-t border-green-500/20 text-sm">
+                      <span className="text-[#a1a1a1]">Retail: ${retailValue.toFixed(2)}</span>
+                      <span className="text-[#D4AF37] font-semibold">Customer Paid: ${paidPrice.toFixed(2)}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-[#0a0a0a] rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-[#a1a1a1]">Total Paid</span>
+                      <span className="text-xl font-bold text-[#D4AF37]">
+                        ${paidPrice.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })()}
 
-              {/* Status-specific messages */}
-              {selectedCertificate.order_status === 'ready' && (
-                <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-sm text-green-500">
-                    Scan customer's pass to verify, then complete checkout in POS.
-                  </p>
-                </div>
+              {/* Active pass instructions */}
+              {selectedCertificate.order_status === 'active' && (
+                <>
+                  <div className="bg-[#D4AF37]/10 border border-[#D4AF37]/20 rounded-lg p-3 flex items-start gap-3">
+                    <DollarSign className="w-5 h-5 text-[#D4AF37] flex-shrink-0 mt-0.5" />
+                    <p className="text-sm text-[#D4AF37]">
+                      Apply the discount in Dutchie POS, complete the transaction, then enter the Dutchie Transaction ID below.
+                    </p>
+                  </div>
+
+                  {/* Dutchie Transaction ID Input */}
+                  <div>
+                    <label className="block text-sm text-[#a1a1a1] mb-2 flex items-center gap-2">
+                      <FileText className="w-4 h-4" />
+                      Dutchie Transaction ID <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={dutchieTransactionId}
+                      onChange={(e) => setDutchieTransactionId(e.target.value)}
+                      placeholder="Enter Dutchie POS transaction ID..."
+                      className="w-full bg-[#0a0a0a] border border-[#333] rounded-lg px-4 py-3 text-white placeholder-[#666] font-mono focus:outline-none focus:border-[#D4AF37] transition-colors"
+                    />
+                  </div>
+                </>
               )}
 
               {selectedCertificate.order_status === 'cancelled' && (
@@ -973,20 +967,32 @@ export default function QueuePage() {
                   </p>
                 </div>
               )}
+
+              {/* Dutchie TX ID for completed orders */}
+              {selectedCertificate.order_status === 'redeemed' && selectedCertificate.dutchie_transaction_id && (
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 flex items-center gap-3">
+                  <FileText className="w-5 h-5 text-blue-400 flex-shrink-0" />
+                  <div>
+                    <p className="text-xs text-blue-400">Dutchie Transaction</p>
+                    <p className="text-sm text-white font-mono">{selectedCertificate.dutchie_transaction_id}</p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Modal Actions */}
             <div className="sticky bottom-0 bg-[#1a1a1a] border-t border-[#333] p-4 space-y-2">
-              {selectedCertificate.order_status === 'ready' && (
+              {selectedCertificate.order_status === 'active' && (
                 <button
-                  onClick={() => updateOrderStatus(selectedCertificate.id, 'picked_up', selectedCertificate.certificate_number)}
-                  className="w-full py-3 px-4 bg-gradient-to-r from-[#F4D03F] to-[#B8960C] hover:from-[#D4AF37] hover:to-[#9a7b0a] text-black font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
+                  onClick={() => completePickup(selectedCertificate.id, selectedCertificate.certificate_number)}
+                  disabled={!dutchieTransactionId.trim()}
+                  className="w-full py-3 px-4 bg-gradient-to-r from-[#F4D03F] to-[#B8960C] hover:from-[#D4AF37] hover:to-[#9a7b0a] text-black font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <CheckCircle2 className="w-5 h-5" />
                   Complete Pickup
                 </button>
               )}
-              {selectedCertificate.order_status === 'picked_up' && (
+              {selectedCertificate.order_status === 'redeemed' && (
                 <div className="text-center py-2">
                   <p className="text-sm text-green-500 flex items-center justify-center gap-2">
                     <CheckCircle2 className="w-5 h-5" />
@@ -994,7 +1000,7 @@ export default function QueuePage() {
                   </p>
                 </div>
               )}
-              {selectedCertificate.order_status === 'cancelled' && (
+              {(selectedCertificate.order_status === 'cancelled' || selectedCertificate.order_status === 'expired') && (
                 <div className="text-center py-2">
                   <p className="text-sm text-red-400">
                     This claim has expired

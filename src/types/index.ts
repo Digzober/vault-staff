@@ -22,31 +22,24 @@ export interface Certificate {
   qr_code_data: string
   expires_at: string
   pickup_by: string | null
-  ready_at: string | null
   redeemed_at: string | null
   redeemed_location: string | null
-  claim_location_id: string | null
   voided: boolean
   voided_reason: string | null
   original_price: number | null
   final_price: number | null
-  available_for_pickup_at: string | null
-  order_status: 'pending' | 'preparing' | 'ready' | 'picked_up' | 'cancelled' | null
-  prepared_at: string | null
-  picked_up_at: string | null
-  cancelled_at: string | null
-  admin_assigned_at: string | null
-  admin_notes: string | null
-  inventory_returned: boolean
-  inventory_returned_at: string | null
-  inventory_returned_by: string | null
+  order_status: 'active' | 'redeemed' | 'expired' | 'cancelled' | null
+  dutchie_transaction_id: string | null
+  redeemed_by_staff: string | null
   created_at: string
   auctions?: {
     id: string
+    current_price: number
     packages: {
       id: string
       name: string
       description: string
+      retail_value: number
       items: { name: string; quantity: number }[]
     }
   }
@@ -55,11 +48,6 @@ export interface Certificate {
     name: string | null
     username: string | null
     phone: string | null
-  }
-  claim_location?: {
-    id: string
-    name: string
-    full_name: string
   }
 }
 
