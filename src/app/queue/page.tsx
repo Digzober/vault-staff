@@ -358,14 +358,14 @@ export default function QueuePage() {
 
       // Success!
       const retailValue = cert.auctions?.packages?.retail_value || 0
-      const paidPrice = cert.auctions?.current_price || 0
-      const discount = retailValue - paidPrice
+      const finalPrice = cert.final_price ?? cert.auctions?.current_price ?? 0
+      const dutchieDiscount = retailValue - finalPrice
 
       setScanResult({
         type: 'success',
         title: 'Valid Pass',
-        message: discount > 0
-          ? `Apply $${discount.toFixed(2)} discount in Dutchie POS`
+        message: dutchieDiscount > 0
+          ? `Apply $${dutchieDiscount.toFixed(2)} discount in Dutchie POS`
           : `Ready to process: ${cert.auctions?.packages?.name || 'Package'}`,
         certificate: cert
       })
@@ -566,8 +566,9 @@ export default function QueuePage() {
             {filteredCertificates.map((cert) => {
               const tabConfig = TAB_CONFIG[activeTab]
               const retailValue = cert.auctions?.packages?.retail_value || 0
-              const paidPrice = cert.auctions?.current_price || 0
-              const discount = retailValue - paidPrice
+              const finalPrice = cert.final_price ?? cert.auctions?.current_price ?? 0
+              const couponDiscount = cert.discount_amount ?? 0
+              const dutchieDiscount = retailValue - finalPrice
               return (
                 <div
                   key={cert.id}
@@ -625,18 +626,21 @@ export default function QueuePage() {
                   </div>
 
                   {/* Discount Display */}
-                  {discount > 0 && activeTab === 'active' && (
+                  {dutchieDiscount > 0 && activeTab === 'active' && (
                     <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-2 mb-3 text-center">
                       <p className="text-xs text-[#a1a1a1]">Dutchie Discount</p>
-                      <p className="text-lg font-bold text-green-400">${discount.toFixed(2)} OFF</p>
+                      <p className="text-lg font-bold text-green-400">${dutchieDiscount.toFixed(2)} OFF</p>
+                      {couponDiscount > 0 && (
+                        <p className="text-xs text-purple-400 mt-1">Includes ${couponDiscount.toFixed(2)} coupon</p>
+                      )}
                     </div>
                   )}
 
                   {/* Price */}
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-[#a1a1a1]">Paid</span>
+                    <span className="text-[#a1a1a1]">Customer Pays</span>
                     <span className="font-semibold text-[#D4AF37]">
-                      ${paidPrice.toFixed(2)}
+                      ${finalPrice.toFixed(2)}
                     </span>
                   </div>
 
@@ -778,12 +782,15 @@ export default function QueuePage() {
                       {/* Show discount prominently */}
                       {(() => {
                         const rv = scanResult.certificate.auctions?.packages?.retail_value || 0
-                        const pp = scanResult.certificate.auctions?.current_price || 0
-                        const disc = rv - pp
+                        const fp = scanResult.certificate.final_price ?? scanResult.certificate.auctions?.current_price ?? 0
+                        const disc = rv - fp
                         return disc > 0 ? (
                           <div className="bg-green-500/20 border border-green-500/30 rounded-lg p-3 text-center mt-2">
                             <p className="text-xs text-[#a1a1a1]">Apply in Dutchie POS</p>
                             <p className="text-2xl font-bold text-green-400">${disc.toFixed(2)} OFF</p>
+                            {(scanResult.certificate.discount_amount ?? 0) > 0 && (
+                              <p className="text-xs text-purple-400 mt-1">Includes ${scanResult.certificate.discount_amount.toFixed(2)} coupon</p>
+                            )}
                           </div>
                         ) : null
                       })()}
@@ -908,24 +915,28 @@ export default function QueuePage() {
               {/* Discount Display - GIANT */}
               {(() => {
                 const retailValue = selectedCertificate.auctions?.packages?.retail_value || 0
-                const paidPrice = selectedCertificate.auctions?.current_price || 0
-                const discount = retailValue - paidPrice
-                return discount > 0 ? (
+                const finalPrice = selectedCertificate.final_price ?? selectedCertificate.auctions?.current_price ?? 0
+                const couponDiscount = selectedCertificate.discount_amount ?? 0
+                const dutchieDiscount = retailValue - finalPrice
+                return dutchieDiscount > 0 ? (
                   <div className="bg-green-500/10 border-2 border-green-500/40 rounded-xl p-6 text-center">
                     <p className="text-xs text-[#a1a1a1] uppercase tracking-wider mb-1">Apply This Discount in Dutchie</p>
-                    <p className="text-5xl font-bold text-green-400">${discount.toFixed(2)}</p>
+                    <p className="text-5xl font-bold text-green-400">${dutchieDiscount.toFixed(2)}</p>
                     <p className="text-sm text-green-400/70 mt-1">OFF</p>
                     <div className="flex items-center justify-between mt-3 pt-3 border-t border-green-500/20 text-sm">
                       <span className="text-[#a1a1a1]">Retail: ${retailValue.toFixed(2)}</span>
-                      <span className="text-[#D4AF37] font-semibold">Customer Paid: ${paidPrice.toFixed(2)}</span>
+                      <span className="text-[#D4AF37] font-semibold">Customer Pays: ${finalPrice.toFixed(2)}</span>
                     </div>
+                    {couponDiscount > 0 && (
+                      <p className="text-sm text-purple-400 mt-2">Coupon applied: ${couponDiscount.toFixed(2)} off</p>
+                    )}
                   </div>
                 ) : (
                   <div className="bg-[#0a0a0a] rounded-lg p-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-[#a1a1a1]">Total Paid</span>
+                      <span className="text-sm text-[#a1a1a1]">Customer Pays</span>
                       <span className="text-xl font-bold text-[#D4AF37]">
-                        ${paidPrice.toFixed(2)}
+                        ${finalPrice.toFixed(2)}
                       </span>
                     </div>
                   </div>

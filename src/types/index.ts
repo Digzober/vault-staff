@@ -27,6 +27,7 @@ export interface Certificate {
   voided: boolean
   voided_reason: string | null
   original_price: number | null
+  discount_amount: number | null
   final_price: number | null
   order_status: 'active' | 'redeemed' | 'expired' | 'cancelled' | null
   dutchie_transaction_id: string | null
