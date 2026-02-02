@@ -78,6 +78,7 @@ export default function QueuePage() {
   const [scannerInput, setScannerInput] = useState('')
   const [isProcessingScan, setIsProcessingScan] = useState(false)
   const [dutchieTransactionId, setDutchieTransactionId] = useState('')
+  const [scannedCertificateId, setScannedCertificateId] = useState<string | null>(null)
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
   const router = useRouter()
   const scannerInputRef = useRef<HTMLInputElement>(null)
@@ -575,6 +576,7 @@ export default function QueuePage() {
                   onClick={() => {
                     setSelectedCertificate(cert)
                     setDutchieTransactionId('')
+                    setScannedCertificateId(null)
                   }}
                   className={`bg-[#1a1a1a] border rounded-xl p-4 cursor-pointer hover:border-[#D4AF37] transition-all ${tabConfig.borderClass}`}
                 >
@@ -789,7 +791,7 @@ export default function QueuePage() {
                             <p className="text-xs text-[#a1a1a1]">Apply in Dutchie POS</p>
                             <p className="text-2xl font-bold text-green-400">${disc.toFixed(2)} OFF</p>
                             {(scanResult.certificate.discount_amount ?? 0) > 0 && (
-                              <p className="text-xs text-purple-400 mt-1">Includes ${scanResult.certificate.discount_amount.toFixed(2)} coupon</p>
+                              <p className="text-xs text-purple-400 mt-1">Includes ${scanResult.certificate.discount_amount!.toFixed(2)} coupon</p>
                             )}
                           </div>
                         ) : null
@@ -803,6 +805,7 @@ export default function QueuePage() {
                   {scanResult.type === 'success' && scanResult.certificate && (
                     <button
                       onClick={() => {
+                        setScannedCertificateId(scanResult.certificate!.id)
                         setSelectedCertificate(scanResult.certificate!)
                         setDutchieTransactionId('')
                         setShowScanner(false)
@@ -944,7 +947,7 @@ export default function QueuePage() {
               })()}
 
               {/* Active pass instructions */}
-              {selectedCertificate.order_status === 'active' && (
+              {selectedCertificate.order_status === 'active' && scannedCertificateId === selectedCertificate.id && (
                 <>
                   <div className="bg-[#D4AF37]/10 border border-[#D4AF37]/20 rounded-lg p-3 flex items-start gap-3">
                     <DollarSign className="w-5 h-5 text-[#D4AF37] flex-shrink-0 mt-0.5" />
@@ -970,6 +973,16 @@ export default function QueuePage() {
                 </>
               )}
 
+              {/* Prompt to scan when viewing without scan */}
+              {selectedCertificate.order_status === 'active' && scannedCertificateId !== selectedCertificate.id && (
+                <div className="bg-[#333]/30 border border-[#444] rounded-lg p-4 text-center">
+                  <ScanLine className="w-8 h-8 text-[#a1a1a1] mx-auto mb-2" />
+                  <p className="text-sm text-[#a1a1a1]">
+                    Scan the customer&apos;s QR code to process this order
+                  </p>
+                </div>
+              )}
+
               {selectedCertificate.order_status === 'cancelled' && (
                 <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 flex items-start gap-3">
                   <Ban className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
@@ -993,7 +1006,7 @@ export default function QueuePage() {
 
             {/* Modal Actions */}
             <div className="sticky bottom-0 bg-[#1a1a1a] border-t border-[#333] p-4 space-y-2">
-              {selectedCertificate.order_status === 'active' && (
+              {selectedCertificate.order_status === 'active' && scannedCertificateId === selectedCertificate.id && (
                 <button
                   onClick={() => completePickup(selectedCertificate.id, selectedCertificate.certificate_number)}
                   disabled={!dutchieTransactionId.trim()}
